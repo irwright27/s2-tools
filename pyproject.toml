@@ -20,6 +20,11 @@ dependencies = [
     "rasterio",
     "xarray",
     "matplotlib",
+    "pystac-client>=0.9.0",
+    "planetary-computer>=1.0.0",
+    "odc-stac>=0.5.3",
+    "dask>=2026.8.0",
+    "geopandas>=1.1.4",
 ]
 
 [project.optional-dependencies]
