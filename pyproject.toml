@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "s2-tools"
+version = "0.1.0"
+description = "Tools for processing and analyzing Sentinel-2 imagery and time series."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Ian Wright" }
+]
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "rasterio",
+    "xarray",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "jupyter",
+    "ipykernel",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

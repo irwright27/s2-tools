@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local development
+sandbox/
+notebooks/
+
+# IDE / OS
+.vscode/
+.DS_Store
+
+# Environment variables
+.env
+
+# Remote sensing data
+*.tif
+*.tiff
+*.jp2
+*.vrt
+*.nc
+*.hdf
+*.h5
