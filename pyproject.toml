@@ -25,6 +25,7 @@ dependencies = [
     "odc-stac>=0.5.3",
     "dask>=2026.8.0",
     "geopandas>=1.1.4",
+    "statsmodels>=0.15.0",
 ]
 
 [project.optional-dependencies]
