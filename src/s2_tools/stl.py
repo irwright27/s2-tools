@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from numbers import Integral
 
 import numpy as np
 import pandas as pd
@@ -8,167 +9,167 @@ from statsmodels.tsa.seasonal import STL
 
 
 DEFAULT_PERIOD = 365
+DEFAULT_NS = 7
 DEFAULT_INNER_ITER = 2
 DEFAULT_OUTER_ITER = 5
 
 
-def next_odd(value: float) -> int:
-    """
-    Return the smallest odd integer greater than or equal to value.
-    """
+def _validate_integer(value: int, name: str, minimum: int) -> None:
+    """Reject fractional and boolean parameters before passing them to STL."""
+    if isinstance(value, bool) or not isinstance(value, Integral) or value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}.")
+
+
+def _next_odd(value: float) -> int:
+    """Return the smallest odd integer greater than or equal to value."""
     n = math.ceil(value)
-
-    if n % 2 == 0:
-        n += 1
-
-    return n
+    return n if n % 2 == 1 else n + 1
 
 
-def calculate_nt(
-    ns: int,
-    period: int = DEFAULT_PERIOD,
-) -> int:
+def calculate_trend_window(ns: int, period: int = DEFAULT_PERIOD) -> int:
     """
-    Calculate the STL trend-smoother length following the
-    recommendation of Cleveland et al. (1990).
+    Calculate the STL trend-window length from Cleveland et al. (1990).
 
-    Parameters
-    ----------
-    ns : int
-        Seasonal LOESS smoothing parameter.
+    nt >= 1.5 * period / (1 - 1.5 / ns)
 
-    period : int, default 365
-        Number of observations in one seasonal cycle.
-
-    Returns
-    -------
-    int
-        Smallest odd integer satisfying Cleveland's recommended
-        lower bound for the trend smoother.
+    The returned value is the smallest odd integer satisfying the expression.
     """
-    if period < 2:
-        raise ValueError("period must be at least 2.")
-
-    if ns < 3:
-        raise ValueError("ns must be at least 3.")
-
+    _validate_integer(period, "period", 2)
+    _validate_integer(ns, "ns", 3)
     if ns % 2 == 0:
-        raise ValueError("ns must be an odd integer.")
+        raise ValueError("ns must be an odd integer >= 3.")
 
-    denominator = 1 - (1.5 / ns)
-
-    nt_min = (1.5 * period) / denominator
-
-    return next_odd(nt_min)
+    nt_min = 1.5 * period / (1.0 - 1.5 / ns)
+    return _next_odd(nt_min)
 
 
-def calculate_nl(
-    period: int = DEFAULT_PERIOD,
-) -> int:
+def calculate_low_pass_window(period: int = DEFAULT_PERIOD) -> int:
     """
-    Calculate the STL low-pass smoother length.
+    Return an odd low-pass window strictly greater than period.
 
-    nl is the smallest odd integer strictly greater than the
-    seasonal period, consistent with the STL implementation
-    used by statsmodels.
+    statsmodels.STL requires low_pass > period and low_pass to be odd.
     """
-    if period < 2:
-        raise ValueError("period must be at least 2.")
+    _validate_integer(period, "period", 2)
 
     nl = period + 1
-
-    if nl % 2 == 0:
-        nl += 1
-
-    return nl
+    return nl if nl % 2 == 1 else nl + 1
 
 
 def stl_parameters(
-    ns: int,
+    ns: int = DEFAULT_NS,
     period: int = DEFAULT_PERIOD,
     inner_iter: int = DEFAULT_INNER_ITER,
     outer_iter: int = DEFAULT_OUTER_ITER,
 ) -> dict[str, int]:
-    """
-    Construct the STL parameter set used by s2-tools.
-
-    The seasonal smoother ns is selected diagnostically.
-    The trend and low-pass smoother lengths are calculated
-    following Cleveland et al. (1990).
-    """
-    if inner_iter < 1:
-        raise ValueError("inner_iter must be at least 1.")
-
-    if outer_iter < 0:
-        raise ValueError("outer_iter cannot be negative.")
+    """Return the explicit STL parameters used by :func:`decompose_stl`."""
+    _validate_integer(inner_iter, "inner_iter", 1)
+    _validate_integer(outer_iter, "outer_iter", 0)
 
     return {
         "period": period,
         "seasonal": ns,
-        "trend": calculate_nt(
-            ns=ns,
-            period=period,
-        ),
-        "low_pass": calculate_nl(
-            period=period,
-        ),
+        "trend": calculate_trend_window(ns, period),
+        "low_pass": calculate_low_pass_window(period),
         "inner_iter": inner_iter,
         "outer_iter": outer_iter,
     }
 
 
+def prepare_daily_series(
+    series: pd.Series,
+    interpolate: bool = True,
+) -> pd.Series:
+    """
+    Normalize a VI time series to one value per day and a complete daily index.
+
+    Duplicate observations on the same date are averaged. Missing days are
+    optionally filled by time interpolation.
+
+    Parameters
+    ----------
+    series : pandas.Series
+        VI values indexed by datetime.
+    interpolate : bool, default True
+        If True, fill missing daily values using time interpolation in both
+        directions. Leading/trailing missing values use the nearest valid
+        value; interior gaps are linearly interpolated in time.
+
+    Returns
+    -------
+    pandas.Series
+        Daily series with a DatetimeIndex.
+    """
+    if not isinstance(series, pd.Series):
+        raise TypeError("series must be a pandas Series.")
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise TypeError("series index must be a pandas DatetimeIndex.")
+    if series.empty:
+        raise ValueError("series is empty.")
+
+    if series.index.hasnans:
+        raise ValueError("series index contains NaT.")
+    if np.isinf(series.to_numpy(dtype=float)).any():
+        raise ValueError("series contains infinite values.")
+    if not series.notna().any():
+        raise ValueError("series has no non-missing observations.")
+
+    out = series.astype(float).sort_index().copy()
+    out.index = out.index.normalize()
+    out = out.groupby(level=0).mean()
+
+    daily_index = pd.date_range(
+        start=out.index.min(),
+        end=out.index.max(),
+        freq="1D",
+        tz=out.index.tz,
+    )
+    out = out.reindex(daily_index)
+
+    if interpolate:
+        out = out.interpolate(method="time", limit_direction="both")
+
+    return out
+
+
 def decompose_stl(
     series: pd.Series,
-    ns: int,
+    ns: int = DEFAULT_NS,
     period: int = DEFAULT_PERIOD,
     inner_iter: int = DEFAULT_INNER_ITER,
     outer_iter: int = DEFAULT_OUTER_ITER,
 ) -> pd.DataFrame:
     """
-    Decompose a regularly spaced time series using STL.
+    Decompose a complete daily VI series into STL components.
 
-    Parameters
-    ----------
-    series : pandas.Series
-        Complete, regularly spaced time series with a DatetimeIndex.
-        Missing values are not allowed.
-
-    ns : int
-        Seasonal LOESS smoothing parameter. This parameter should
-        be selected diagnostically.
-
-    period : int, default 365
-        Number of observations in one seasonal cycle.
-
-    inner_iter : int, default 2
-        Number of STL inner-loop iterations.
-
-    outer_iter : int, default 5
-        Number of STL robustness iterations.
+    Gap filling is intentionally kept separate. Use :func:`prepare_daily_series`
+    first when working from irregular Sentinel-2 observations.
 
     Returns
     -------
     pandas.DataFrame
-        DataFrame containing the original series and its STL
-        trend, seasonal, and remainder components.
+        Columns: observed, trend, seasonal, remainder.
     """
     if not isinstance(series, pd.Series):
         raise TypeError("series must be a pandas Series.")
-
     if not isinstance(series.index, pd.DatetimeIndex):
-        raise TypeError(
-            "series must have a pandas DatetimeIndex."
-        )
-
+        raise TypeError("series index must be a pandas DatetimeIndex.")
     if series.empty:
         raise ValueError("series is empty.")
 
-    values = series.to_numpy(dtype=float)
+    if series.index.hasnans or not series.index.is_unique:
+        raise ValueError("series index must contain unique dates without NaT.")
+    expected = pd.date_range(series.index[0], periods=len(series), freq="1D")
+    if (
+        not series.index.equals(expected)
+        or not series.index.equals(series.index.normalize())
+    ):
+        raise ValueError("series must have an increasing, complete daily index at midnight.")
 
+    values = series.to_numpy(dtype=float)
     if not np.isfinite(values).all():
         raise ValueError(
             "series contains NaN or infinite values. "
-            "Gap filling must be performed before STL decomposition."
+            "Prepare/gap-fill the series before STL decomposition."
         )
 
     params = stl_parameters(
@@ -187,17 +188,20 @@ def decompose_stl(
         robust=outer_iter > 0,
     )
 
-    result = model.fit(
+    fit = model.fit(
         inner_iter=inner_iter,
         outer_iter=outer_iter,
     )
 
-    return pd.DataFrame(
+    out = pd.DataFrame(
         {
             "observed": series,
-            "trend": result.trend,
-            "seasonal": result.seasonal,
-            "remainder": result.resid,
+            "trend": fit.trend,
+            "seasonal": fit.seasonal,
+            "remainder": fit.resid,
         },
         index=series.index,
     )
+
+    out.attrs["stl_parameters"] = params
+    return out

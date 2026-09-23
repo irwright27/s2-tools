@@ -14,7 +14,8 @@ venv/
 
 # Local development
 sandbox/
-notebooks/
+notebooks/*
+!notebooks/test_stl_partition.ipynb
 
 # IDE / OS
 .vscode/
